@@ -1,18 +1,26 @@
 import path from 'path'
+import fs from 'fs'
 import jsPrompt from 'vide-plugin-context-js'
 import cssPrompt from 'vide-plugin-context-css'
 import htmlPrompt from 'vide-plugin-context-html'
 
+//当前支持的frameworks
+const frameworks = ['zhifubao', 'weixin']
+
 /*
-* integrated Object is used for each js file
+* 内部集成的context
 */
 let integratedContexts = {}
 let integratedWords = []
 let integratedMatch = {} // if valued has been matched, ignore it
 
 /*
-* current Object is used for opened js file
-* once file changed, we should analyse again
+* 当前项目框架的context
+*/
+let frameworkContexts = {}
+
+/*
+* 当前js文件打开的context，一旦文件改变了，就要重新分析
 */
 let currentWords = []
 let currentMatch = {}
@@ -105,7 +113,7 @@ function getTypedCharacters (action, store, editor) {
       let splitChar = value.includes(':') ? ':' : '.'
       let arr = value.split(splitChar)
       if (arr.length === 2) {
-        if (integratedContexts[arr[0]] || currentContext[arr[0]]) {
+        if (integratedContexts[arr[0]] || currentContext[arr[0]] || frameworkContexts[arr[0]]) {
           value = {
             context: arr[0],
             value: arr[1]
@@ -120,12 +128,13 @@ function getTypedCharacters (action, store, editor) {
     return value ? value : '';
   } else {
     return ''
-  } 
+  }
 }
 
 function matchWords (str) {
   str = str.replace('$','\\$')
   let reg = new RegExp('^' + str, 'i')
+  // 把集成的words跟当前文件的words进行合并
   let lists = integratedWords.concat(currentWords)
   if (prevPromptStr && str.slice(0, prevPromptStr.length) === prevPromptStr) {
       lists = prevPromptLists
@@ -157,8 +166,8 @@ function matchWords (str) {
 }
 
 function matchContext (item) {
-  let lists = integratedContexts[item.context] ? integratedContexts[item.context] : currentContext[item.context]
-  if (item.value) {
+  let lists = integratedContexts[item.context] ? integratedContexts[item.context] : (frameworkContexts[item.context] ? frameworkContexts[item.context] : currentContext[item.context])
+  if (item.value && lists) {
     let str = item.value
     lists = lists.filter((item) => {
       let v = item.name || item.value || item
@@ -212,6 +221,9 @@ function _receive (data) {
   }
 }
 
+/*
+* 分析当前文件
+*/
 function analyseFile (filepath, pkg, projectPath) {
   let extension = pkg.vide && pkg.vide.promptExtension || []
   if (process) {
@@ -220,6 +232,26 @@ function analyseFile (filepath, pkg, projectPath) {
   process = require('child_process').fork(path.join(__dirname, 'traverse.js'))
   process.send({filepath, extension, projectPath})
   process.on('message', _receive)
+}
+
+/*
+* 根据当前的配置信息，导入相关的framework设置
+*/
+function analyseFramework (configFile) {
+  fs.readFile(configFile, function (error, content) {
+    if (!error) {
+      content = content.toString()
+      try {
+        content = JSON.parse(content)
+        if (frameworks.includes(content.frameType)) {
+          let frameworkObject = require('./framework/' + content.frameType).default
+          frameworkContexts = frameworkObject && frameworkObject.context || {}
+          return
+        }
+      } catch (e) {}
+    }
+    frameworkContexts = {}
+  })
 }
 
 export default ({editor, store, view, packageInfo, baseClass, signal, console}) => {
@@ -232,6 +264,8 @@ export default ({editor, store, view, packageInfo, baseClass, signal, console}) 
       if (['EDITOR_SET_FILE_TYPE','FILE_CREATE'].includes(mutation.type)) {
         analyseFile(store.state.editor.currentFile, packageInfo.package, store.state.projectPath)
         analyseContent(store.state.editor.content)
+        // 设置framework context
+        analyseFramework(path.join(store.state.projectPath, '.videconfig'))
       }
     }
   })
@@ -338,8 +372,38 @@ export default ({editor, store, view, packageInfo, baseClass, signal, console}) 
       return result
     }
     
+    /*
+    * 根据位置，查找函数定义
+    */
     mapping ({position}) {
       return this.mappingScript(position)
+    }
+    
+    /*
+    * 根据位置，查找函数说明
+    */
+    mappingFunctionDesc ({position}) {
+      let line = editor.session.getLine(position.row)
+      // map result
+      let matchResult
+      let result = null
+      matchResult = this._mappingWord(line, position, /[\w\-\$\.]+$/, /^([\w\-\$]+)\.([\w\-\$]+)\(/, (result) => {return {context: result[1], value: result[2]}})
+      if (matchResult.context && matchResult.value) {
+        let context = matchResult.context
+        let value = matchResult.value
+        let arr = frameworkContexts[context]
+        if (arr) {
+          arr.some((item) => {
+            if (item.name === value && item.desc) {
+              result = item
+              return true
+            } else {
+              return false
+            }
+          })
+        }
+      }
+      return result
     }
   }
 }

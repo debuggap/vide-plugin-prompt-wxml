@@ -1,9 +1,10 @@
 {
   "name": "vide-plugin-prompt-js",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "author": "vic.wang",
   "scripts": {
-    "start": "babel ./src/ -d ./lib/"
+    "start": "babel ./src/ -d ./lib/",
+    "dev": "babel --watch ./src/ -d ./lib/"
   },
   "vide": {
     "type": "prompt",
@@ -23,9 +24,9 @@
   },
   "main": "lib/index.js",
   "dependencies": {
-    "vide-plugin-context-css": "*",
-    "vide-plugin-context-js": "*",
-    "vide-plugin-context-html": "*",
+    "vide-plugin-context-css": "^0.0.1",
+    "vide-plugin-context-js": "^0.0.1",
+    "vide-plugin-context-html": "^0.0.1",
     "babel-traverse": "^6.24.1",
     "babylon": "^6.17.1"
   },
