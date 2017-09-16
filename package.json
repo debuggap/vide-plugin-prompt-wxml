@@ -1,26 +1,26 @@
 {
-  "name": "vide-plugin-prompt-js",
-  "version": "0.0.2",
+  "name": "vide-plugin-prompt-wxml",
+  "version": "0.0.1",
   "author": "vic.wang",
   "scripts": {
     "start": "babel ./src/ -d ./lib/",
-    "dev": "babel --watch ./src/ -d ./lib/"
+    "dev": "babel --watch ./src/ -d ./lib/",
+    "prepublish": "npm start"
   },
   "vide": {
     "type": "prompt",
     "promptExtension": [
-      "js",
-      "jsx"
+      "wxml"
     ],
     "promptPriority": 1
   },
   "keywords": [
     "vide-plugin",
-    "prompt-js"
+    "prompt-wxml"
   ],
   "repository": {
     "type": "git",
-    "url": "git@github.com:debuggap/vide-plugin-prompt-js.git"
+    "url": "git@github.com:debuggap/vide-plugin-prompt-wxml.git"
   },
   "main": "lib/index.js",
   "dependencies": {

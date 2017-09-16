@@ -1,68 +1,22 @@
 import path from 'path'
 import fs from 'fs'
-import jsPrompt from 'vide-plugin-context-js'
-import cssPrompt from 'vide-plugin-context-css'
-import htmlPrompt from 'vide-plugin-context-html'
-
-//当前支持的frameworks
-const frameworks = ['zhifubao', 'weixin']
+import Properties from './properties'
 
 /*
 * 内部集成的context
 */
-let integratedContexts = {}
-let integratedWords = []
-let integratedMatch = {} // if valued has been matched, ignore it
+let integratedWords = Object.keys(Properties.context)
+let integratedContext = Properties.context
+let integratedDesc = Properties.desc
 
 /*
-* 当前项目框架的context
-*/
-let frameworkContexts = {}
-
-/*
-* 当前js文件打开的context，一旦文件改变了，就要重新分析
+* 当前页面的
 */
 let currentWords = []
 let currentMatch = {}
-let currentContext = {}
 
 let prevPromptStr = ''
 let prevPromptLists = []
-// mapResult is returned after analysing js file
-let mapResult = null
-// process instance
-let process = null
-
-function loadIntegratedWords () {
-  let allWords = []
-  let context
-  let i
-  // add context
-  allWords = htmlPrompt.variables
-  context = cssPrompt.context
-  for (i in context) {
-    integratedContexts[i] = context[i]
-    allWords.push(i)
-    allWords = allWords.concat(context[i])
-  }
-  context = jsPrompt.context
-  for (i in context) {
-    integratedContexts[i] = context[i]
-    allWords.push(i)
-    allWords = allWords.concat(context[i])
-  }
-  allWords = allWords.concat(jsPrompt.variables)
-  
-  // add variables
-  let key
-  for (i = 0; i < allWords.length; i++) {
-    key = allWords[i].value || allWords[i]
-    if (!integratedMatch[key]) {
-      integratedWords.push(allWords[i])
-      integratedMatch[key] = 1
-    }
-  }
-}
 
 /*
 * analyse current file
@@ -75,7 +29,7 @@ function analyseContent (con) {
     return
   }
   arr.forEach((item) => {
-    if (!currentMatch[item] && !integratedMatch[item]) {
+    if (!currentMatch[item]) {
       currentWords.push(item)
       currentMatch[item] = 1
     }
@@ -86,7 +40,7 @@ function getTypedCharacters (action, store, editor) {
   if (action.action == 'remove' && !store.state.editor.promptLists.length) {
     return ''
   }
-  if (action && action.lines.length === 1 && /^\S+$/.test(action.lines[0]) && action.start.row != undefined && action.start.row == action.end.row) {
+  if (action && action.lines.length === 1 && action.start.row != undefined && action.start.row == action.end.row) {
     let session = editor.session
     let line = session.getLine(action.start.row)
     let str
@@ -107,25 +61,31 @@ function getTypedCharacters (action, store, editor) {
       return ''
     }
     
-    let value = str.match(/[a-zA-Z_\$][a-zA-Z0-9_$\.\-\:]*$/)
-    if (value && value[0]) {
-      value = value[0]
-      let splitChar = value.includes(':') ? ':' : '.'
-      let arr = value.split(splitChar)
-      if (arr.length === 2) {
-        if (integratedContexts[arr[0]] || currentContext[arr[0]] || frameworkContexts[arr[0]]) {
-          value = {
-            context: arr[0],
-            value: arr[1]
-          }
-        } else {
-          value = arr[1]
+    let value = str.match(/<([\w\-]+)$/)
+    if (value) {
+      // 如果是元素
+      value = {
+        context: '<',
+        value: value[1]
+      }
+    } else {
+      // 查看是否在编辑元素属性
+      let propertyMatch = str.match(/\s+[a-zA-Z_\$\-]+$|\s$/)
+      let eleMatch = str.match(/<([\w\-]+).*$/)
+      if (eleMatch && propertyMatch && integratedContext[eleMatch[1]] && integratedContext[eleMatch[1]].length) {
+        propertyMatch = propertyMatch[0].trim()
+        value = {
+          value: propertyMatch,
+          context: eleMatch[1]
         }
       } else {
-        value = arr.pop()
+        value = str.match(/[a-zA-Z_\$\-]+$/)
+        if (value) {
+          value = value[0]
+        }
       }
     }
-    return value ? value : '';
+    return value ? value : ''
   } else {
     return ''
   }
@@ -166,7 +126,13 @@ function matchWords (str) {
 }
 
 function matchContext (item) {
-  let lists = integratedContexts[item.context] ? integratedContexts[item.context] : (frameworkContexts[item.context] ? frameworkContexts[item.context] : currentContext[item.context])
+  let lists = null
+  if (item.context === '<') {
+    // 元素选择
+    lists = integratedWords
+  } else if (integratedContext[item.context]) {
+    lists = integratedContext[item.context]
+  }
   if (item.value && lists) {
     let str = item.value
     lists = lists.filter((item) => {
@@ -177,116 +143,20 @@ function matchContext (item) {
   return lists
 }
 
-function _receive (data) {
-  if (data) {
-    mapResult = data
-    let value
-    let name
-    for (let i in data.funcs) {
-      name = i + '(' + data.funcs[i].params.join(',') + ')'
-      value = i + '()'
-      if (!currentMatch[name]) {
-        currentWords.push({value, name, params: data.funcs[i].params})
-        currentMatch[name] = 1
-      }
-    }
-    // deal with context
-    currentContext = {}
-    for (let i in data.context) {
-      let realPath = data.context[i]
-      let obj
-      try {
-        obj = require(realPath)
-      } catch (e) {
-        continue
-      }
-      let properties = []
-      if (Object.keys(obj).join('') === 'default') {
-        obj = obj.default
-      }
-      for (let key in obj) {
-        if (obj.hasOwnProperty(key)) {
-          properties.push(key)
-        }
-      }
-      currentContext[i] = properties.sort()
-    }
-  } else {
-    mapResult = null
-    currentContext = {}
-  }
-  if (process) {
-    process.kill()
-    process = null
-  }
-}
-
-/*
-* 分析当前文件
-*/
-function analyseFile (filepath, pkg, projectPath) {
-  let extension = pkg.vide && pkg.vide.promptExtension || []
-  if (process) {
-    process.kill()
-  }
-  process = require('child_process').fork(path.join(__dirname, 'traverse.js'))
-  process.send({filepath, extension, projectPath})
-  process.on('message', _receive)
-}
-
-/*
-* 根据当前的配置信息，导入相关的framework设置
-*/
-function analyseFramework (configFile) {
-  fs.readFile(configFile, function (error, content) {
-    if (!error) {
-      content = content.toString()
-      try {
-        content = JSON.parse(content)
-        if (frameworks.includes(content.frameType)) {
-          let frameworkObject = require('./framework/' + content.frameType).default
-          frameworkContexts = frameworkObject && frameworkObject.context || {}
-          return
-        }
-      } catch (e) {}
-    }
-    frameworkContexts = {}
-  })
-}
 
 export default ({editor, store, view, packageInfo, baseClass, signal, console}) => {
   global.console = console
-  // load integrated words
-  loadIntegratedWords()
   // subscribe change file
   store.subscribe((mutation, state) => {
-    if (store.state.editor.promptName === 'videPluginPromptJS') {
+    if (store.state.editor.promptName === 'videPluginPromptWXML') {
       if (['EDITOR_SET_FILE_TYPE','FILE_CREATE'].includes(mutation.type)) {
-        analyseFile(store.state.editor.currentFile, packageInfo.package, store.state.projectPath)
         analyseContent(store.state.editor.content)
-        // 设置framework context
-        analyseFramework(path.join(store.state.projectPath, '.videconfig'))
       }
     }
   })
 
-  editor.session.on('change', function (action) {
-    if (store.state.editor.promptName === 'videPluginPromptJS' && ["insert", "remove"].includes(action.action) && action.lines.join('') === '') {
-      analyseFile(store.state.editor.currentFile, packageInfo.package, store.state.projectPath)
-      analyseContent(editor.getValue())
-    }
-  })
-  
-  signal.receive('saveFile', () => {
-    if (store.state.editor.promptName === 'videPluginPromptJS') {
-      currentWords = []
-      currentMatch = {}
-      analyseFile(store.state.editor.currentFile, packageInfo.package, store.state.projectPath)
-      analyseContent(store.state.editor.content)
-    }
-  })
   // return execute class
-  return class videPluginPromptJS {
+  return class videPluginPromptWXML {
     index ({action}) {
       let promptLists = []
       let promptStr = ''
@@ -326,59 +196,6 @@ export default ({editor, store, view, packageInfo, baseClass, signal, console}) 
       return result
     }
     
-    // mapping vue component
-    _mappingComponent (component) {
-      let result = null
-      if (mapResult.defaultSpecifier && mapResult.defaultSpecifier[component]) {
-        result = mapResult.defaultSpecifier[component]
-        result['value'] = component
-      } else {
-        let _component = component.replace(/-/g, '').toLowerCase()
-        for (let key in mapResult.defaultSpecifier) {
-          if (key.toLowerCase() === _component) {
-            result = mapResult.defaultSpecifier[key]
-            result['value'] = component
-            break
-          }
-        }
-      }
-      return result
-    }
-    
-    // mapping script tag
-    mappingScript (position) {
-      let line = editor.session.getLine(position.row)
-      // map result
-      let result = null
-      let matchValue
-      matchValue = this._mappingWord(line, position, /[\w\-\$]+$/, /^([\w\-\$]+)\(/, (result) => result[1])
-      // mapping of call function
-      if (matchValue) {
-        result = mapResult.funcs[matchValue] || null
-        if (result) {
-          result['value'] = matchValue
-        }
-      } else if (/^\s*import/.test(line)) {
-        // import mapping
-        matchValue = this._mappingWord(line, position, /[\w\-\$]+$/, /^[\w\-\$]+/, (result) => result[0])
-        if (matchValue) {
-          result = this._mappingComponent(matchValue)
-          if (!result) {
-            // if this is not a default component
-            result = mapResult.funcs[matchValue] || null
-          }
-        }
-      }
-      return result
-    }
-    
-    /*
-    * 根据位置，查找函数定义
-    */
-    mapping ({position}) {
-      return this.mappingScript(position)
-    }
-    
     /*
     * 根据位置，查找函数说明
     */
@@ -387,20 +204,27 @@ export default ({editor, store, view, packageInfo, baseClass, signal, console}) 
       // map result
       let matchResult
       let result = null
-      matchResult = this._mappingWord(line, position, /[\w\-\$\.]+$/, /^([\w\-\$]+)\.([\w\-\$]+)\(/, (result) => {return {context: result[1], value: result[2]}})
-      if (matchResult.context && matchResult.value) {
-        let context = matchResult.context
-        let value = matchResult.value
-        let arr = frameworkContexts[context]
-        if (arr) {
-          arr.some((item) => {
-            if (item.name === value && item.desc) {
-              result = item
-              return true
-            } else {
-              return false
+      matchResult = this._mappingWord(line, position, /^\s*<[\w\-]+$/, /^\s*<([\w\-]+)/, (result) => result[1])
+      // 元素类型
+      if (matchResult && integratedDesc[matchResult]) {
+        result = {desc: integratedDesc[matchResult]}
+      } else {
+        // 属性类型
+        let property = this._mappingWord(line, position, /[\w\-]+$/, /^[\w\-]+/, (result) => result[0])
+        if (property) {
+          let context = line.match(/^\s*<([\w\-]+)/)
+          if (context) {
+            context = context[1]
+            if (integratedContext[context]) {
+              let arr = integratedContext[context]
+              for (let i = 0; i < arr.length; i++) {
+                if (arr[i].name === property) {
+                  result = {desc: `<h3>${context} : ${property}</h3><p>${arr[i].info}</p>`}
+                  break
+                }
+              }
             }
-          })
+          }
         }
       }
       return result
